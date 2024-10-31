@@ -4,12 +4,12 @@ from scipy import sparse
 from scipy.integrate import quad
 from numpy.polynomial import Legendre as Leg, Chebyshev as Cheb
 
-from typing import Literal, Optional, Callable, Self
+from typing import Literal, Optional, Callable, Self, TypeAlias
 from abc import ABC, abstractmethod
 
-type Domain = tuple[float, float]
-type Boundary = tuple[float, float]
-type Function = sp.Function | Callable[[np.ndarray], np.ndarray]
+Domain: TypeAlias = tuple[float, float]
+Boundary: TypeAlias = tuple[float, float]
+Function: TypeAlias = sp.Function | Callable[[np.ndarray], np.ndarray]
 
 x = sp.Symbol("x")
 
