@@ -62,7 +62,7 @@ def map_expression_true_domain(
     return u
 
 
-class FunctionSpace:
+class FunctionSpace(ABC):
     """Base class for function spaces"""
 
     def __init__(self, N: int, domain: Domain = (-1, 1)) -> None:
@@ -81,9 +81,11 @@ class FunctionSpace:
         return self._domain
 
     @property
+    @abstractmethod
     def reference_domain(self) -> Domain:
         """Return the reference domain of the function space"""
-        raise RuntimeError
+        pass
+        # raise RuntimeError
 
     @property
     def domain_factor(self) -> float:
@@ -116,6 +118,7 @@ class FunctionSpace:
         """
         return 1
 
+    @abstractmethod
     def basis_function(self, j: int, sympy: bool = False) -> Function:
         """Return the j-th basis function of the function space
 
@@ -126,8 +129,10 @@ class FunctionSpace:
         Returns:
             Callable: Basis function
         """
-        raise RuntimeError
+        pass
+        # raise RuntimeError
 
+    @abstractmethod
     def derivative_basis_function(self, j: int, k: int = 1) -> Function:
         """Return the k-th derivative of the j-th basis function of the function space
 
@@ -138,7 +143,8 @@ class FunctionSpace:
         Returns:
             Callable: Derivative of the basis function
         """
-        raise RuntimeError
+        pass
+        # raise RuntimeError
 
     def evaluate_basis_function(self, Xj: np.ndarray, j: int) -> np.ndarray:
         """Evaluate the j-th basis function at the points Xj
@@ -268,6 +274,10 @@ class Legendre(FunctionSpace):
             return sp.legendre(j, x)
         return Leg.basis(j)
 
+    @property
+    def reference_domain(self) -> Domain:
+        return (-1, 1)
+
     def derivative_basis_function(self, j: int, k: int = 1) -> sp.legendre | Leg:
         """Return the k-th derivative of the j-th basis function of the function space
 
@@ -289,7 +299,8 @@ class Legendre(FunctionSpace):
         Returns:
             float: L2 norm squared
         """
-        raise NotImplementedError
+        return 2 / (2 * N + 1)
+        # return 2 / (2 * np.arange(N) + 1)
 
     def mass_matrix(self) -> np.ndarray:
         """Compute the mass matrix of the function space
@@ -297,7 +308,8 @@ class Legendre(FunctionSpace):
         Returns:
             np.ndarray: Mass matrix
         """
-        raise NotImplementedError
+        arr = np.vectorize(self.L2_norm_sq)(np.arange(self.N + 1))
+        return sparse.diags_array(arr, shape=(self.N + 1, self.N + 1))
 
     def eval(self, uh: np.ndarray, xj: np.ndarray) -> np.ndarray:
         """Evaluate the function at the points xj
@@ -340,6 +352,10 @@ class Chebyshev(FunctionSpace):
             return sp.cos(j * sp.acos(x))
         return Cheb.basis(j)
 
+    @property
+    def reference_domain(self) -> Domain:
+        return (-1, 1)
+
     def derivative_basis_function(self, j: int, k: int = 1) -> sp.Function | Cheb:
         """Return the k-th derivative of the j-th basis function of the function space
 
@@ -358,21 +374,25 @@ class Chebyshev(FunctionSpace):
     def L2_norm_sq(self, N: int) -> float:
         """Return the square of the L2 norm of the basis functions
 
+        # Isn't this the weighted L2 norm?
+
         Args:
             N (int): Number of basis functions
 
         Returns:
             float: L2 norm squared
         """
-        raise NotImplementedError
+        c = 2 if N == 0 else 1
+        return c * np.pi / 2
 
     def mass_matrix(self) -> np.ndarray:
-        """Compute the mass matrix of the function space
+        """Compute the mass matrix of the Chebyshev function space
 
         Returns:
             np.ndarray: Mass matrix
         """
-        raise NotImplementedError
+        arr = np.vectorize(self.L2_norm_sq)(np.arange(self.N + 1))
+        return sparse.diags_array(arr, shape=(self.N + 1, self.N + 1))
 
     def eval(self, uh: np.ndarray, xj: np.ndarray) -> np.ndarray:
         """Evaluate the function at the points xj
@@ -632,9 +652,14 @@ class DirichletLegendre(Composite, Legendre):
     def __init__(self, N, domain=(-1, 1), bc=(0, 0)):
         Legendre.__init__(self, N, domain=domain)
         self.B = Dirichlet(bc, domain, self.reference_domain)
-        self.S = sparse.diags_array([1, -1], [0, 2], shape=(N + 1, N + 3), format="csr")
+        self.S = sparse.diags_array(
+            [1, -1], offsets=[0, 2], shape=(N + 1, N + 3)  # , format="csr"
+        )
 
     def basis_function(self, j: int, sympy: bool = False) -> Function:
+        if sympy:
+            return sp.legendre(j, x) - sp.legendre(j + 2, x)
+        return Leg.basis(j) - Leg.basis(j + 2)
         raise NotImplementedError
 
 
@@ -657,7 +682,9 @@ class DirichletChebyshev(Composite, Chebyshev):
     def __init__(self, N: int, domain: Domain = (-1, 1), bc: Boundary = (0, 0)) -> None:
         Chebyshev.__init__(self, N, domain=domain)
         self.B = Dirichlet(bc, domain, self.reference_domain)
-        self.S = sparse.diags_array([1, -1], [0, 2], shape=(N + 1, N + 3), format="csr")
+        self.S = sparse.diags_array(
+            [1, -1], offsets=[0, 2], shape=(N + 1, N + 3)  # , format="csr"
+        )
 
     def basis_function(self, j: int, sympy: bool = False) -> Function:
         if sympy:
