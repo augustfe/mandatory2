@@ -4,12 +4,13 @@ from scipy import sparse
 from scipy.integrate import quad
 from numpy.polynomial import Legendre as Leg, Chebyshev as Cheb
 
-from typing import Literal, Optional, Callable, Self, TypeAlias
+from typing import Literal, Optional, Callable, TypeAlias, TypeVar
 from abc import ABC, abstractmethod
 
 Domain: TypeAlias = tuple[float, float]
 Boundary: TypeAlias = tuple[float, float]
 Function: TypeAlias = sp.Function | Callable[[np.ndarray], np.ndarray]
+SelfBasisFunction = TypeVar("SelfBasisFunction", bound="BasisFunction")
 
 x = sp.Symbol("x")
 
@@ -755,7 +756,7 @@ class BasisFunction:
     def num_derivatives(self) -> int:
         return self._num_derivatives
 
-    def diff(self, k) -> Self:
+    def diff(self, k) -> SelfBasisFunction:
         return self.__class__(self.function_space, diff=self.num_derivatives + k)
 
 
