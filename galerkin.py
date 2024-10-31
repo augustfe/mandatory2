@@ -7,10 +7,11 @@ from numpy.polynomial import Legendre as Leg, Chebyshev as Cheb
 from typing import Literal, Optional, Callable, Self
 from abc import ABC, abstractmethod
 
-x = sp.Symbol("x")
 type Domain = tuple[float, float]
 type Boundary = tuple[float, float]
 type Function = sp.Function | Callable[[np.ndarray], np.ndarray]
+
+x = sp.Symbol("x")
 
 
 def map_reference_domain(x: float, d: Domain, r: Domain) -> float:
@@ -85,7 +86,6 @@ class FunctionSpace(ABC):
     def reference_domain(self) -> Domain:
         """Return the reference domain of the function space"""
         pass
-        # raise RuntimeError
 
     @property
     def domain_factor(self) -> float:
@@ -130,7 +130,6 @@ class FunctionSpace(ABC):
             Callable: Basis function
         """
         pass
-        # raise RuntimeError
 
     @abstractmethod
     def derivative_basis_function(self, j: int, k: int = 1) -> Function:
@@ -144,7 +143,6 @@ class FunctionSpace(ABC):
             Callable: Derivative of the basis function
         """
         pass
-        # raise RuntimeError
 
     def evaluate_basis_function(self, Xj: np.ndarray, j: int) -> np.ndarray:
         """Evaluate the j-th basis function at the points Xj
@@ -300,7 +298,6 @@ class Legendre(FunctionSpace):
             float: L2 norm squared
         """
         return 2 / (2 * N + 1)
-        # return 2 / (2 * np.arange(N) + 1)
 
     def mass_matrix(self) -> np.ndarray:
         """Compute the mass matrix of the function space
@@ -450,12 +447,8 @@ class Trigonometric(FunctionSpace):
         Returns:
             np.ndarray: Mass matrix
         """
-        return sparse.diags_array(
-            [self.L2_norm_sq(self.N + 1)], shape=(self.N + 1, self.N + 1)
-        )
-        # return sparse.diags(
-        #     [self.L2_norm_sq(self.N + 1)], [0], (self.N + 1, self.N + 1), format="csr"
-        # )
+        arr = np.vectorize(self.L2_norm_sq)(np.arange(self.N + 1))
+        return sparse.diags_array(arr, shape=(self.N + 1, self.N + 1))
 
     def eval(self, uh: np.ndarray, xj: np.ndarray) -> np.ndarray:
         """Evaluate the function at the points xj
@@ -479,6 +472,10 @@ class Trigonometric(FunctionSpace):
     @B.setter
     def B(self, B: "BoundaryCondition") -> None:
         self._B = B
+
+    @abstractmethod
+    def L2_norm_sq(self, N: int) -> float:
+        pass
 
 
 class Sines(Trigonometric):
@@ -534,18 +531,25 @@ class Sines(Trigonometric):
 class Cosines(Trigonometric):
 
     def __init__(self, N: int, domain: Domain = (0, 1), bc: Boundary = (0, 0)) -> None:
-        raise NotImplementedError
+        Trigonometric.__init__(self, N, domain=domain)
+        self.B = Neumann(bc, domain, self.reference_domain)
 
     def basis_function(self, j: int, sympy: bool = False) -> Function:
-        raise NotImplementedError
+        if sympy:
+            return sp.cos(j * sp.pi * x)
+        return lambda Xj: np.cos(j * np.pi * Xj)
 
     def derivative_basis_function(
         self, j: int, k: int = 1
     ) -> Callable[[np.ndarray], np.ndarray]:
-        raise NotImplementedError
+        scale = (j * np.pi) ** k
+        func = [np.cos, np.sin][k % 2]
+        sign = [1, -1, -1, 1][k % 4]
+
+        return lambda Xj: sign * scale * func(j * np.pi * Xj)
 
     def L2_norm_sq(self, N: int) -> float:
-        raise NotImplementedError
+        return 1.0 if N == 0 else 0.5
 
 
 # Create classes to hold the boundary function
@@ -634,9 +638,8 @@ class Composite(FunctionSpace):
         return P @ uh + self.B.Xl(Xj)
 
     def mass_matrix(self):
-        M = sparse.diags_array(
-            [self.L2_norm_sq(self.N + 1)], shape=(self.N + 1, self.N + 1)
-        )
+        arr = np.vectorize(self.L2_norm_sq)(np.arange(self.N + 3))
+        M = sparse.diags_array(arr, shape=(self.N + 3, self.N + 3))
         return self.S @ M @ self.S.T
 
     @property
@@ -652,15 +655,13 @@ class DirichletLegendre(Composite, Legendre):
     def __init__(self, N, domain=(-1, 1), bc=(0, 0)):
         Legendre.__init__(self, N, domain=domain)
         self.B = Dirichlet(bc, domain, self.reference_domain)
-        self.S = sparse.diags_array(
-            [1, -1], offsets=[0, 2], shape=(N + 1, N + 3)  # , format="csr"
-        )
+        self.S = sparse.diags_array([1, -1], offsets=[0, 2], shape=(N + 1, N + 3))
 
     def basis_function(self, j: int, sympy: bool = False) -> Function:
         if sympy:
             return sp.legendre(j, x) - sp.legendre(j + 2, x)
+
         return Leg.basis(j) - Leg.basis(j + 2)
-        raise NotImplementedError
 
 
 class NeumannLegendre(Composite, Legendre):
@@ -671,10 +672,26 @@ class NeumannLegendre(Composite, Legendre):
         bc: Boundary = (0, 0),
         constraint: float = 0,
     ) -> None:
-        raise NotImplementedError
+        Legendre.__init__(self, N, domain=domain)
+        self.constraint = constraint
+        self.B = Neumann(bc, domain, self.reference_domain)
+        arr = np.arange(N + 1)
+        self.S = sparse.diags_array(
+            [
+                (arr + 2) * (arr + 3),
+                -arr * (arr + 1),
+            ],
+            offsets=[0, 2],
+            shape=(N + 1, N + 3),
+        )
 
     def basis_function(self, j: int, sympy: bool = False) -> Function:
-        raise NotImplementedError
+        def factors(A, B):
+            return A * (j + 2) * (j + 3) - B * (j + 1) * j
+
+        if sympy:
+            return factors(sp.legendre(j, x), sp.legendre(j + 2, x))
+        return factors(Leg.basis(j), Leg.basis(j + 2))
 
 
 class DirichletChebyshev(Composite, Chebyshev):
@@ -682,9 +699,7 @@ class DirichletChebyshev(Composite, Chebyshev):
     def __init__(self, N: int, domain: Domain = (-1, 1), bc: Boundary = (0, 0)) -> None:
         Chebyshev.__init__(self, N, domain=domain)
         self.B = Dirichlet(bc, domain, self.reference_domain)
-        self.S = sparse.diags_array(
-            [1, -1], offsets=[0, 2], shape=(N + 1, N + 3)  # , format="csr"
-        )
+        self.S = sparse.diags_array([1, -1], offsets=[0, 2], shape=(N + 1, N + 3))
 
     def basis_function(self, j: int, sympy: bool = False) -> Function:
         if sympy:
@@ -700,10 +715,25 @@ class NeumannChebyshev(Composite, Chebyshev):
         bc: Boundary = (0, 0),
         constraint: float = 0,
     ) -> None:
-        raise NotImplementedError
+        Chebyshev.__init__(self, N, domain=domain)
+        self.constraint = constraint
+        self.B = Neumann(bc, domain, self.reference_domain)
+        self.S = sparse.diags_array(
+            [
+                (np.arange(N + 1) + 2) ** 2,
+                -np.arange(N + 1) ** 2,
+            ],
+            offsets=[0, 2],
+            shape=(N + 1, N + 3),
+        )
 
     def basis_function(self, j: int, sympy: bool = False) -> Function:
-        raise NotImplementedError
+        def factors(A, B):
+            return A * (j + 2) ** 2 - B * j**2
+
+        if sympy:
+            return factors(sp.cos(j * sp.acos(x)), sp.cos((j + 2) * sp.acos(x)))
+        return factors(Cheb.basis(j), Cheb.basis(j + 2))
 
 
 class BasisFunction:
